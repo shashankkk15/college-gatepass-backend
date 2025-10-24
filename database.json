@@ -1,3 +1,7 @@
 {
-  "requests": []
+  "students": [],
+  "requests": [],
+  "moderators": [],
+  "gatekeepers": [],
+  "admins": []
 }
