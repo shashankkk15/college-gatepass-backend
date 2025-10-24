@@ -1,15 +1,18 @@
 {
-  "name": "backend",
+  "name": "college-gatepass-backend",
   "version": "1.0.0",
+  "description": "Backend for college gatepass system",
   "main": "main.js",
   "scripts": {
     "start": "node main.js"
   },
   "dependencies": {
-    "body-parser": "^1.20.0",
     "cors": "^2.8.5",
-    "express": "^4.18.2",
-    "qrcode": "^1.5.4",
-    "uuid": "^9.0.0"
-  }
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "author": "Your Name",
+  "license": "MIT"
 }
