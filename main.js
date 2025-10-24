@@ -100,4 +100,27 @@ app.get("/api/admin/logs", (req, res) => {
 });
 
 console.log("✅ Server running on port", PORT);
+// ---------------- Student Status API ----------------
+app.get('/api/student/status/:studentId', (req, res) => {
+    const studentId = req.params.studentId;
+
+    // Read database (JSON file)
+    let db = JSON.parse(fs.readFileSync('database.json', 'utf-8'));
+
+    // Find the student's request
+    let request = db.requests.find(r => r.id === studentId);
+
+    if(!request){
+        return res.json({status: "not found"});
+    }
+
+    // Send relevant info
+    res.json({
+        status: request.status,        // pending / approved / rejected
+        qr: request.qr || null,        // QR code (only if approved)
+        reason: request.rejectionReason || null  // only if rejected
+    });
+});
+
 app.listen(PORT);
+
