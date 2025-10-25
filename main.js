@@ -1,112 +1,129 @@
-const express = require('express');
-const fs = require('fs');
-const cors = require('cors');
-const app = express();
-const PORT = process.env.PORT || 3000;
+import express from "express";
+import cors from "cors";
+import fs from "fs";
+import { randomUUID } from "crypto";
+import QRCode from "qrcode";
 
-// Middleware
+const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ---------------- Helpers ----------------
-const readDB = () => JSON.parse(fs.readFileSync('database.json','utf-8'));
-const writeDB = (db) => fs.writeFileSync('database.json', JSON.stringify(db,null,2));
+const DB_FILE = "./database.json";
 
-const generateQR = (id) => `https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${id}`;
+// Helper to read/write DB
+function readDB() {
+  return JSON.parse(fs.readFileSync(DB_FILE, "utf-8"));
+}
+function writeDB(data) {
+  fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2));
+}
 
-// ---------------- Student ----------------
-// Submit a new request
-app.post('/api/request-pass', (req,res)=>{
-    const {name,id,reason,expectedTime,duration} = req.body;
-    let db = readDB();
+// 🧍 STUDENT: Submit new gate pass
+app.post("/api/request-pass", (req, res) => {
+  const { name, id, reason, expectedTime, duration } = req.body;
+  const db = readDB();
 
-    const exists = db.requests.find(r => r.id===id && r.status==="pending");
-    if(exists) return res.json({message:"You already have a pending request."});
+  const newRequest = {
+    uuid: randomUUID(),
+    name,
+    id,
+    reason,
+    expectedTime,
+    duration,
+    status: "pending",
+    qr: null,
+    rejectionReason: null,
+    entryTime: null,
+    exitTime: null,
+  };
 
-    const newRequest = {
-        id, name, reason, expectedTime, duration,
-        status: "pending", qr: null, rejectionReason: null,
-        entryTime: null, exitTime: null
-    };
+  db.requests.push(newRequest);
+  writeDB(db);
 
-    db.requests.push(newRequest);
+  res.json({ message: "Request submitted successfully", request: newRequest });
+});
+
+// 🧍 STUDENT: Check status
+app.get("/api/student/status/:id", (req, res) => {
+  const { id } = req.params;
+  const db = readDB();
+  const requests = db.requests.filter((r) => r.id === id);
+  res.json({ requests });
+});
+
+// 🧑‍🏫 MODERATOR: Get all pending requests
+app.get("/api/moderator/requests", (req, res) => {
+  const db = readDB();
+  const pending = db.requests.filter((r) => r.status === "pending");
+  res.json({ requests: pending });
+});
+
+// 🧑‍🏫 MODERATOR: Approve a request
+app.post("/api/moderator/approve/:uuid", async (req, res) => {
+  const { uuid } = req.params;
+  const db = readDB();
+  const request = db.requests.find((r) => r.uuid === uuid);
+
+  if (!request) return res.status(404).json({ error: "Request not found" });
+
+  const qrData = {
+    name: request.name,
+    id: request.id,
+    reason: request.reason,
+    approvedAt: new Date().toISOString(),
+  };
+
+  const qrImage = await QRCode.toDataURL(JSON.stringify(qrData));
+
+  request.status = "approved";
+  request.qr = qrImage;
+
+  writeDB(db);
+  res.json({ message: "Request approved successfully" });
+});
+
+// 🧑‍🏫 MODERATOR: Reject a request
+app.post("/api/moderator/reject/:uuid", (req, res) => {
+  const { uuid } = req.params;
+  const { reason } = req.body;
+  const db = readDB();
+  const request = db.requests.find((r) => r.uuid === uuid);
+
+  if (!request) return res.status(404).json({ error: "Request not found" });
+
+  request.status = "rejected";
+  request.rejectionReason = reason;
+  writeDB(db);
+
+  res.json({ message: "Request rejected successfully" });
+});
+
+// 🚪 GATEKEEPER: Scan QR
+app.post("/api/gate/scan", (req, res) => {
+  const { id } = req.body;
+  const db = readDB();
+  const request = db.requests.find((r) => r.id === id && r.status === "approved");
+
+  if (!request)
+    return res.status(400).json({ valid: false, message: "Invalid or expired pass" });
+
+  if (!request.entryTime) {
+    request.entryTime = new Date().toISOString();
     writeDB(db);
-    res.json({message:"Request submitted successfully"});
-});
-
-// Get student request status + QR
-app.get('/api/student/status/:id', (req,res)=>{
-    const studentId = req.params.id;
-    let db = readDB();
-    const request = db.requests.find(r => r.id===studentId);
-
-    if(!request) return res.json({status:"no_request"});
-    res.json({
-        status: request.status,
-        qr: request.qr,
-        reason: request.rejectionReason
-    });
-});
-
-// ---------------- Moderator ----------------
-// Get all requests (pending + history)
-app.get('/api/moderator/requests', (req,res)=>{
-    let db = readDB();
-    res.json(db.requests);
-});
-
-// Approve request
-app.post('/api/moderator/approve/:id', (req,res)=>{
-    let db = readDB();
-    const request = db.requests.find(r => r.id===req.params.id);
-    if(!request) return res.status(404).json({error:"Request not found"});
-
-    request.status = "approved";
-    request.qr = generateQR(request.id);
-
+    return res.json({ valid: true, message: "Entry recorded" });
+  } else if (!request.exitTime) {
+    request.exitTime = new Date().toISOString();
     writeDB(db);
-    res.json({message:"Request approved"});
+    return res.json({ valid: true, message: "Exit recorded" });
+  } else {
+    return res.json({ valid: false, message: "Pass already used" });
+  }
 });
 
-// Reject request
-app.post('/api/moderator/reject/:id', (req,res)=>{
-    const {reason} = req.body;
-    let db = readDB();
-    const request = db.requests.find(r => r.id===req.params.id);
-    if(!request) return res.status(404).json({error:"Request not found"});
-
-    request.status = "rejected";
-    request.rejectionReason = reason;
-
-    writeDB(db);
-    res.json({message:"Request rejected"});
+// 🧑‍💼 ADMIN: View all logs
+app.get("/api/admin/logs", (req, res) => {
+  const db = readDB();
+  res.json({ requests: db.requests });
 });
 
-// ---------------- Gatekeeper ----------------
-// Scan QR for entry/exit
-app.post('/api/gate/scan', (req,res)=>{
-    const {qrId, type} = req.body; // type = "entry" or "exit"
-    let db = readDB();
-    const request = db.requests.find(r => r.id===qrId);
-
-    if(!request || request.status!=="approved") return res.status(404).json({error:"Invalid QR"});
-
-    const now = new Date().toISOString();
-    if(type==="entry") request.entryTime = now;
-    if(type==="exit") request.exitTime = now;
-
-    writeDB(db);
-    res.json({message:`${type} recorded`});
-});
-
-// ---------------- Admin ----------------
-// View all logs
-app.get('/api/admin/logs', (req,res)=>{
-    let db = readDB();
-    res.json(db.requests);
-});
-
-// ---------------- Start Server ----------------
-app.listen(PORT, ()=>{
-    console.log(`Server running on port ${PORT}`);
-});
+app.listen(3000, () => console.log("✅ Server running on port 3000"));
